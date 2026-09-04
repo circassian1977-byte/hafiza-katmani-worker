@@ -20,3 +20,12 @@ tıkla kurabilirsiniz - kod görmeniz, terminal açmanız gerekmez.
 
 Bu kadar. Worker adresiniz artık `https://hafiza-katmani-worker.<hesabiniz>.workers.dev`
 şeklinde hazır olacak.
+## Worker'ı güncellemek isterseniz
+
+Bu depo zamanla düzeltme/iyileştirme alabilir. Sizin kurulumunuz, "Deploy"
+düğmesiyle GitHub hesabınıza açılan bir KOPYA (fork) üzerinden çalışıyor -
+bu depodaki değişiklikler oraya otomatik gitmez.
+
+Güncellemek için: kendi fork'unuzun GitHub sayfasında "Sync fork" düğmesine
+tıklayın. Cloudflare, fork'a bağlı olduğu için değişikliği görüp Worker'ınızı
+otomatik yeniden dağıtır. Elle kod kopyalamanıza gerek yoktur.
