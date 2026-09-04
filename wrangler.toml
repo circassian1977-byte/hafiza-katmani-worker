@@ -1,0 +1,11 @@
+name = "hafiza-katmani-worker"
+main = "src/index.js"
+compatibility_date = "2025-07-18"
+
+# D1 veritabani baglantisi. "Deploy to Cloudflare Workers" dugmesiyle
+# kuruldugunda Cloudflare bu veritabanini SIZIN icin otomatik olusturur
+# ve gercek kimlikle degistirir - elle bir sey yapmaniza gerek yok.
+[[d1_databases]]
+binding = "DB"
+database_name = "hafiza-katmani-db"
+database_id = "BURAYA_D1_KIMLIGI_GELECEK"
