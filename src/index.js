@@ -111,6 +111,20 @@ const ARAC_TANIMLARI = [
       required: ['baslik', 'icerik'],
     },
   },
+  {
+    name: 'ham_kaydet',
+    description:
+      'hatirla/durumu_kaydet\'ten farklı: filtresiz/ham içerik (uzun kod, tam gerekçe) için - context sıkışıp özetlenmeden (compaction) önce kayıp riskini azaltmak amacıyla, üzerine yazmadan doğrudan ham_log\'a ekler.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        baslik: { type: 'string' },
+        icerik: { type: 'string' },
+        etiketler: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['baslik', 'icerik'],
+    },
+  },
 ];
 
 async function pcYeAyna(env, govdeMetni, jeton) {
@@ -147,6 +161,16 @@ async function kartYansimasiAra(env, sorgu) {
   const s = `%${sorgu.trim()}%`;
   const { results } = await env.DB.prepare(
     'SELECT * FROM kartlar_yansima WHERE konu LIKE ? OR icerik LIKE ? ORDER BY zaman DESC LIMIT 3'
+  )
+    .bind(s, s)
+    .all();
+  return results || [];
+}
+
+async function hamLogAra(env, sorgu) {
+  const s = `%${sorgu.trim()}%`;
+  const { results } = await env.DB.prepare(
+    'SELECT * FROM ham_log WHERE baslik LIKE ? OR icerik LIKE ? ORDER BY id DESC LIMIT 3'
   )
     .bind(s, s)
     .all();
@@ -191,6 +215,19 @@ async function yerelAracCagrisi(env, ad, girdi) {
     const { baslik, icerik, etiketler = [] } = girdi;
     if (!baslik || !icerik) return aracMetni('Hata: baslik ve icerik zorunlu.');
     await bekleyenEkle(env, 'hatirla', { baslik, icerik, etiketler });
+    // durumu_guncelle/durumu_kaydet gibi anlık bir yansıma da bırakılıyor,
+    // yoksa bilgisayar açılana kadar hafizaya_sor bu notu hiç bulamaz.
+    // "not: " öneki ile hatirla notları, gerçek proje kartlarıyla aynı konu
+    // ad uzayını paylaşmıyor - aksi halde aynı isimli bir proje kartı ile
+    // bir hatirla notu, bilgisayar kapalıyken D1'de birbirinin üzerine
+    // yazabilirdi (ON CONFLICT(konu) tam eşleşmeye bakıyor).
+    const yansimaKonusu = 'not: ' + baslik;
+    await env.DB.prepare(
+      'INSERT INTO kartlar_yansima (konu, icerik, etiketler, zaman) VALUES (?, ?, ?, ?) ' +
+        'ON CONFLICT(konu) DO UPDATE SET icerik = excluded.icerik, etiketler = excluded.etiketler, zaman = excluded.zaman'
+    )
+      .bind(yansimaKonusu, icerik, JSON.stringify(etiketler), new Date().toISOString())
+      .run();
     return aracMetni(
       `Not alındı: "${baslik}". Bilgisayar erişilemez durumda - bilgisayar açılınca kalıcı hafızaya işlenecek.`
     );
@@ -199,17 +236,36 @@ async function yerelAracCagrisi(env, ad, girdi) {
   if (ad === 'hafizaya_sor') {
     const { sorgu = '' } = girdi;
     const sonuclar = await kartYansimasiAra(env, sorgu);
-    if (!sonuclar.length) {
+    if (sonuclar.length) {
+      const metin = sonuclar
+        .map((k) => `### ${k.konu} (yansıma, son güncelleme: ${k.zaman})\n${k.icerik}`)
+        .join('\n\n');
       return aracMetni(
-        `"${sorgu}" için kayıtlı bir kart bulunamadı (not: bilgisayar şu an erişilemez durumda, bu yalnızca son bilinen yansımadır, tam arşiv değildir).`
+        `[BİLGİSAYAR ŞU AN ERİŞİLEMEZ - bu, en son bilgisayar açıkken kaydedilmiş yansımadır, güncel olmayabilir]\n\n${metin}`
       );
     }
-    const metin = sonuclar
-      .map((k) => `### ${k.konu} (yansıma, son güncelleme: ${k.zaman})\n${k.icerik}`)
+
+    const hamSonuclar = await hamLogAra(env, sorgu);
+    if (!hamSonuclar.length) {
+      return aracMetni(
+        `"${sorgu}" için kayıtlı bir kart veya ham kayıt bulunamadı (not: bilgisayar şu an erişilemez durumda, bu yalnızca son bilinen yansımadır, tam arşiv değildir).`
+      );
+    }
+    const hamMetin = hamSonuclar
+      .map((k) => `### ${k.baslik} (ham_log, ${k.zaman})\n${k.icerik}`)
       .join('\n\n');
     return aracMetni(
-      `[BİLGİSAYAR ŞU AN ERİŞİLEMEZ - bu, en son bilgisayar açıkken kaydedilmiş yansımadır, güncel olmayabilir]\n\n${metin}`
+      `[BİLGİSAYAR ŞU AN ERİŞİLEMEZ - kart bulunamadı, ham_log yedeğinden gösteriliyor]\n\n${hamMetin}`
     );
+  }
+
+  if (ad === 'ham_kaydet') {
+    const { baslik, icerik, etiketler = [] } = girdi;
+    if (!baslik || !icerik) return aracMetni('Hata: baslik ve icerik zorunlu.');
+    await env.DB.prepare('INSERT INTO ham_log (baslik, icerik, etiketler, zaman) VALUES (?, ?, ?, ?)')
+      .bind(baslik, icerik, JSON.stringify(etiketler), new Date().toISOString())
+      .run();
+    return aracMetni(`Ham kayıt alındı: "${baslik}" - filtresiz olarak ham_log'a yazıldı.`);
   }
 
   return aracMetni(`Bilinmeyen araç: ${ad}`);
@@ -240,6 +296,13 @@ async function mcpIstegiIsle(govdeMetni, env, jeton) {
   if (method === 'tools/call') {
     const ad = params?.name;
     const girdi = params?.arguments || {};
+
+    // ham_kaydet PC'nin açık olup olmamasından bağımsız çalışır - vekilliğe
+    // gerek yok, her zaman doğrudan Worker'daki D1'e (ham_log) yazılır.
+    if (ad === 'ham_kaydet') {
+      const sonuc = await yerelAracCagrisi(env, ad, girdi);
+      return jsonRpcSonuc(id, sonuc);
+    }
 
     const vekilCevap = await pcYeAyna(env, govdeMetni, jeton);
     if (vekilCevap) return vekilCevap;
@@ -305,6 +368,31 @@ export default {
         .bind(konu, icerik, JSON.stringify(etiketler), new Date().toISOString())
         .run();
       return jsonYanit({ yansitildi: true });
+    }
+
+    // 11 Eylül 2026 düzeltmesi: PC tarafındaki senkron-worker.js'in gerçek
+    // sözleşmesiyle eşleşecek şekilde yeniden adlandırıldı - hamYansit()/
+    // hamLogCek() sırasıyla /ham-yansit ve /ham-log (?sonra= ile) çağırıyor;
+    // önceki adlar (ham-log-ekle/ham-log-cek) o dosya görülmeden tahmin
+    // edilmişti ve hiç eşleşmiyordu, best-effort hata yutma nedeniyle
+    // sessizce hep 404 alıyordu.
+    if (req.method === 'POST' && parcalar[0] === 'ham-yansit') {
+      const { baslik, icerik, etiketler = [], platform = null } = await req.json().catch(() => ({}));
+      if (!baslik || !icerik) return jsonYanit({ hata: 'baslik ve icerik zorunlu' }, 400);
+      await env.DB.prepare('INSERT INTO ham_log (baslik, icerik, etiketler, platform, zaman) VALUES (?, ?, ?, ?, ?)')
+        .bind(baslik, icerik, JSON.stringify(etiketler), platform, new Date().toISOString())
+        .run();
+      return jsonYanit({ eklendi: true });
+    }
+
+    if (req.method === 'GET' && parcalar[0] === 'ham-log') {
+      const sonra = Number(url.searchParams.get('sonra') || 0) || 0;
+      const { results } = await env.DB.prepare(
+        'SELECT id, baslik, icerik, etiketler, platform, zaman FROM ham_log WHERE id > ? ORDER BY id ASC'
+      )
+        .bind(sonra)
+        .all();
+      return jsonYanit({ kayitlar: results || [] });
     }
 
     return jsonYanit({ hata: 'bulunamadi' }, 404);
