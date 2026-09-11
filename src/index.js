@@ -217,11 +217,16 @@ async function yerelAracCagrisi(env, ad, girdi) {
     await bekleyenEkle(env, 'hatirla', { baslik, icerik, etiketler });
     // durumu_guncelle/durumu_kaydet gibi anlık bir yansıma da bırakılıyor,
     // yoksa bilgisayar açılana kadar hafizaya_sor bu notu hiç bulamaz.
+    // "not: " öneki ile hatirla notları, gerçek proje kartlarıyla aynı konu
+    // ad uzayını paylaşmıyor - aksi halde aynı isimli bir proje kartı ile
+    // bir hatirla notu, bilgisayar kapalıyken D1'de birbirinin üzerine
+    // yazabilirdi (ON CONFLICT(konu) tam eşleşmeye bakıyor).
+    const yansimaKonusu = 'not: ' + baslik;
     await env.DB.prepare(
       'INSERT INTO kartlar_yansima (konu, icerik, etiketler, zaman) VALUES (?, ?, ?, ?) ' +
         'ON CONFLICT(konu) DO UPDATE SET icerik = excluded.icerik, etiketler = excluded.etiketler, zaman = excluded.zaman'
     )
-      .bind(baslik, icerik, JSON.stringify(etiketler), new Date().toISOString())
+      .bind(yansimaKonusu, icerik, JSON.stringify(etiketler), new Date().toISOString())
       .run();
     return aracMetni(
       `Not alındı: "${baslik}". Bilgisayar erişilemez durumda - bilgisayar açılınca kalıcı hafızaya işlenecek.`
