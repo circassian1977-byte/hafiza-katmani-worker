@@ -370,19 +370,28 @@ export default {
       return jsonYanit({ yansitildi: true });
     }
 
-    if (req.method === 'POST' && parcalar[0] === 'ham-log-ekle') {
-      const { baslik, icerik, etiketler = [] } = await req.json().catch(() => ({}));
+    // 11 Eylül 2026 düzeltmesi: PC tarafındaki senkron-worker.js'in gerçek
+    // sözleşmesiyle eşleşecek şekilde yeniden adlandırıldı - hamYansit()/
+    // hamLogCek() sırasıyla /ham-yansit ve /ham-log (?sonra= ile) çağırıyor;
+    // önceki adlar (ham-log-ekle/ham-log-cek) o dosya görülmeden tahmin
+    // edilmişti ve hiç eşleşmiyordu, best-effort hata yutma nedeniyle
+    // sessizce hep 404 alıyordu.
+    if (req.method === 'POST' && parcalar[0] === 'ham-yansit') {
+      const { baslik, icerik, etiketler = [], platform = null } = await req.json().catch(() => ({}));
       if (!baslik || !icerik) return jsonYanit({ hata: 'baslik ve icerik zorunlu' }, 400);
-      await env.DB.prepare('INSERT INTO ham_log (baslik, icerik, etiketler, zaman) VALUES (?, ?, ?, ?)')
-        .bind(baslik, icerik, JSON.stringify(etiketler), new Date().toISOString())
+      await env.DB.prepare('INSERT INTO ham_log (baslik, icerik, etiketler, platform, zaman) VALUES (?, ?, ?, ?, ?)')
+        .bind(baslik, icerik, JSON.stringify(etiketler), platform, new Date().toISOString())
         .run();
       return jsonYanit({ eklendi: true });
     }
 
-    if (req.method === 'GET' && parcalar[0] === 'ham-log-cek') {
+    if (req.method === 'GET' && parcalar[0] === 'ham-log') {
+      const sonra = Number(url.searchParams.get('sonra') || 0) || 0;
       const { results } = await env.DB.prepare(
-        'SELECT id, baslik, icerik, etiketler, zaman FROM ham_log ORDER BY id ASC'
-      ).all();
+        'SELECT id, baslik, icerik, etiketler, platform, zaman FROM ham_log WHERE id > ? ORDER BY id ASC'
+      )
+        .bind(sonra)
+        .all();
       return jsonYanit({ kayitlar: results || [] });
     }
 

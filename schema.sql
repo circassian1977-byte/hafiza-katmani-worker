@@ -26,5 +26,6 @@ CREATE TABLE IF NOT EXISTS ham_log (
   baslik TEXT,
   icerik TEXT,
   etiketler TEXT,
+  platform TEXT,
   zaman TEXT NOT NULL
 );
